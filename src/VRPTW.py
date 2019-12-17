@@ -1,6 +1,7 @@
 from heapq import heappush, heappop
 import numpy as np
 import scipy.spatial.distance as sp
+import gurobipy as gb
 
 class Customer:
     """A customer is a node of the graph. It has an index, a location and
@@ -89,7 +90,7 @@ class Label:
 
     def __lt__(self, other):
         return self.customer < other.customer
-
+	
     def dominates(self, label):
         """A label is called 'dominant' when compared to another label, if
            it uses less resources than the other label, meaning that all of
@@ -159,6 +160,10 @@ class VRPTW:
         self.costs[-1, 0] = 1000
         self.times = self.costs
         self.duals = np.zeros(len(customers))
+        self.path_costs = self.costs[0,1:-1]
+        self.n = len(customers) - 2
+        self.a = np.eye(self.n)
+        
 
     def subproblem(self):
         l0 = Label(c0, 0, 0, 0)
@@ -180,6 +185,7 @@ class VRPTW:
                 # node is not directly reachable from start (costs[0, n] = INF).
                 # maybe a better solution can be found
                 if not to_label:
+                    from_label.unreachable_cs.add(to_cus)
                     continue
                 
                 if to_label.is_dominated():
@@ -187,20 +193,18 @@ class VRPTW:
 
                 to_cus.filter_dominated_by(to_label)
 
-                if (self.update_unreachable_cs(to_label)
-                        and to_label.is_dominated()):
-                    continue
+              #  if (self.update_unreachable_cs(to_label)
+              #          and to_label.is_dominated()):
+              #      continue
 
                 to_cus.labels.append(to_label)
                 heappush(to_be_extended, to_label)
 
     def extended_label(self, from_label, to_cus):
         """Returns a new label that extends 'from_label' and goes to 'to_cus'.
-           
            Arguments:
                from_label: the label to start from
                to_cus: the customer to reach
-
            Returns:
                A new label with updated resources or None if some resource
                exceeds its limits.
@@ -253,14 +257,30 @@ class VRPTW:
     @staticmethod
     def compute_costs(customers):
         coords = [customer.coords for customer in customers]
-        return sp.squareform(sp.pdist(coords))
+        return sp.squareform(sp.pdist(coords))#squareform costruisce la matrice, pdist costruisce le distanze
+        
+    @staticmethod
+    def compute_path_costs(end_label):
+        if end_label.prev:
+            return compute_path_costs(end_label.prev)+end_label.cost
+        return end_label.cost
+        
+    def masterProblem(self,):    
+        m1 = gb.Model("Carlo")
+        y = m1.addVars(self.n, name="y", vtype=gb.GRB.INTEGER)
+        for i in range(A.shape[0]):
+            m1.addConstr(y.prod(A[i, :].tolist()), gb.GRB.EQUAL, 1)
+        m1.setObjective(quicksum(y.prod(self.path_costs))), gb.GRB.MINIMIZE)
+            #m.write("CuttingStock.lp")
+        m1.optimize()
+        # Dual
+        self.duals = np.fromiter((w.Pi for w in m1.getConstrs()), dtype=np.float64)        
 
-def print_path(label):
-    print(label.customer.index, end="")
+def print_path(label,end="\n"):
     if label.prev:
+        print_path(label.prev,"")
         print(" -> ", end="")
-        print_path(label.prev)
-
+    print(label.customer.index, end=end)
 # Example
 vehicles = 2
 capacity = 50
