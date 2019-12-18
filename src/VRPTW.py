@@ -1,12 +1,12 @@
 from heapq import heappush, heappop
 import numpy as np
 import scipy.spatial.distance as sp
-import gurobipy as gb
+import gurobipy as gp
 
 class Customer:
     """A customer is a node of the graph. It has an index, a location and
        resource requests.
-
+       
        A customers stores a set of labels which are used to identify every
        feasible path that reaches it (see 'Labels' class for more information).
        
@@ -21,6 +21,7 @@ class Customer:
            demand: the amount of resource requested
            time_window: interval of time in which the resource must be delivered
     """
+
     def __init__(self, index, coords, demand, time_window):
         self.index = index
         self.coords = coords
@@ -57,16 +58,16 @@ class Customer:
 class Label:
     """A label describes a path from the starting node to a customer and the
        resources used to reach this customer.
-
+       
        Labels are associated with a customer and are used to identify each
        feasible state in which that customer can be reached.
-
+       
        A dominance relation between labels is needed (see 'dominates' method for
        more information) so only 'best' labels can be kept on a node and the
        resource-minimum path can be found. This is not to be confused with
        the precedence relation between labels needed only for the priority
        queue sorting.
-
+       
        Note that the unreachable customers set is a so called 'dummy resource'.
        It contains also the already visited customers (they cannot be reached
        again because we are looking for an elementary path).
@@ -96,14 +97,13 @@ class Label:
            it uses less resources than the other label, meaning that all of
            its resources must be less than or equal to the other's, but there
            must be at least one resource that is different.
-
+           
            Note that having the unreachable customers set as a resource means
            that a label uses less of this resource if it possesses a subset of
            the other's unreachable customers set.
-
+           
            Arguments:
                label: the label to compare with
-
            Returns:
                True if this label dominates 'label', False otherwise
         """
@@ -129,6 +129,14 @@ class Label:
                 return True
         return False
 
+    def update_unreachable_from_prev(self):
+        """Updates unreachable customers set with customers in previous label
+           set."""
+
+        if self.prev:
+            self.unreachable_cs.update(self.prev.unreachable_cs)
+
+
 class VRPTW:
     """The problem instance class.
 
@@ -148,24 +156,30 @@ class VRPTW:
            capacity: maximum capacity of each vehicle
            customers: a list of Customer objects
     """
-    
+
+    @staticmethod
+    def from_file(file_name):
+        # to be implemented
+        pass
+
+    @staticmethod
+    def compute_costs(customers):
+        coords = [customer.coords for customer in customers]
+        return sp.squareform(sp.pdist(coords))
+
     def __init__(self, vehicles, capacity, customers):
         self.vehicles = vehicles
         self.capacity = capacity
-        # skip starting customer because we don't need paths that visit it
-        self.customers = customers[1:]
-        # use all the customers because we need distances between eache couple
+        self.customers = customers
+        self.n = len(customers) - 2
         self.costs = self.compute_costs(customers)
-        self.costs[0, -1] = 1000
-        self.costs[-1, 0] = 1000
         self.times = self.costs
         self.duals = np.zeros(len(customers))
-        self.path_costs = self.costs[0,1:-1]
-        self.n = len(customers) - 2
-        self.a = np.eye(self.n)
         
-
     def subproblem(self):
+        for customer in self.customers:
+            customer.labels.clear()
+        c0 = self.customers[0]
         l0 = Label(c0, 0, 0, 0)
         c0.labels.append(l0)
         to_be_extended = [l0] # priority queue
@@ -176,14 +190,13 @@ class VRPTW:
             if from_label._is_dominated:
                 continue
 
+            from_label.update_unreachable_from_prev()
             for to_cus in self.customers:
-                if to_cus in from_label.unreachable_cs:
+                if ((from_label.customer is c0 and to_cus.index == self.n + 1)
+                        or to_cus in from_label.unreachable_cs):
                     continue
 
                 to_label = self.extended_label(from_label, to_cus)
-                # needed if the problem is unfeasible and because the last
-                # node is not directly reachable from start (costs[0, n] = INF).
-                # maybe a better solution can be found
                 if not to_label:
                     from_label.unreachable_cs.add(to_cus)
                     continue
@@ -192,16 +205,12 @@ class VRPTW:
                     continue
 
                 to_cus.filter_dominated_by(to_label)
-
-              #  if (self.update_unreachable_cs(to_label)
-              #          and to_label.is_dominated()):
-              #      continue
-
                 to_cus.labels.append(to_label)
                 heappush(to_be_extended, to_label)
 
     def extended_label(self, from_label, to_cus):
         """Returns a new label that extends 'from_label' and goes to 'to_cus'.
+           
            Arguments:
                from_label: the label to start from
                to_cus: the customer to reach
@@ -226,61 +235,24 @@ class VRPTW:
         label = Label(to_cus, cost, load, time, from_label)
         label.unreachable_cs.update(from_label.unreachable_cs)
         return label
-
-    def update_unreachable_cs(self, from_label):
-        """Updates the unreachable customers set of the 'from_label' label by
-           searching for unfeasible labels extending it.
-           
-           Arguments:
-               from_label: the label that needs to be updated
-           
-           Returns:
-               True if the label is updated, False otherwise
-        """
-
-        updated = False
-        for to_cus in self.customers:
-            if to_cus in from_label.unreachable_cs:
-                continue
-
-            label = self.extended_label(from_label, to_cus)
-            if not label:
-                from_label.unreachable_cs.add(to_cus)
-                updated = True
-        return updated
-
-    @staticmethod
-    def from_file(file_name):
-        # to be implemented
-        pass
-
-    @staticmethod
-    def compute_costs(customers):
-        coords = [customer.coords for customer in customers]
-        return sp.squareform(sp.pdist(coords))#squareform costruisce la matrice, pdist costruisce le distanze
         
-    @staticmethod
-    def compute_path_costs(end_label):
-        if end_label.prev:
-            return compute_path_costs(end_label.prev)+end_label.cost
-        return end_label.cost
-        
-    def masterProblem(self,):    
+    def master_problem(self):
         m1 = gb.Model("Carlo")
         y = m1.addVars(self.n, name="y", vtype=gb.GRB.INTEGER)
         for i in range(A.shape[0]):
             m1.addConstr(y.prod(A[i, :].tolist()), gb.GRB.EQUAL, 1)
-        m1.setObjective(quicksum(y.prod(self.path_costs))), gb.GRB.MINIMIZE)
+        m1.setObjective(quicksum(y.prod(self.path_costs)), gb.GRB.MINIMIZE)
             #m.write("CuttingStock.lp")
         m1.optimize()
         # Dual
-        self.duals = np.fromiter((w.Pi for w in m1.getConstrs()), dtype=np.float64)        
+        self.duals = np.fromiter((w.Pi for w in m1.getConstrs()), dtype=np.float64)
 
 def print_path(label,end="\n"):
     if label.prev:
         print_path(label.prev,"")
         print(" -> ", end="")
     print(label.customer.index, end=end)
+
 # Example
 vehicles = 2
 capacity = 50
@@ -297,5 +269,5 @@ c4 = Customer(4, np.array([0, 0]), 0,  (0, 20)) # A
 # C -> D = 3.16
 customers = [c0, c1, c2, c3, c4]
 vrptw = VRPTW(vehicles, capacity, customers)
-vrptw.duals[1] = 20
-vrptw.duals[2] = 10
+#vrptw.duals[1] = 20
+#vrptw.duals[2] = 10
