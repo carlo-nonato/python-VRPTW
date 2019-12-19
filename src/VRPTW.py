@@ -38,6 +38,9 @@ class Customer:
     def __hash__(self):
         return self.index
 
+    def __repr__(self):
+        return f"Customer <{self.index}>"
+
     def filter_dominated_by(self, label):
         """Removes labels dominated by 'label' from this customer."""
 
@@ -91,6 +94,9 @@ class Label:
 
     def __lt__(self, other):
         return self.customer < other.customer
+
+    def __repr__(self):
+        return f"{(self.customer, self.cost, self.load, self.time)}"
 	
     def dominates(self, label):
         """A label is called 'dominant' when compared to another label, if
@@ -167,22 +173,68 @@ class VRPTW:
         coords = [customer.coords for customer in customers]
         return sp.squareform(sp.pdist(coords))
 
+    def path_from_label(self, label):
+        path = []
+        cost = 0
+        while label.prev:
+            from_cus = label.customer
+            to_cus = label.prev.customer
+            cost += self.costs[from_cus, to_cus]
+            path.append(from_cus.index)
+            label = label.prev
+        path.append(label.customer.index)
+        return (list(reversed(path)), cost)
+
     def __init__(self, vehicles, capacity, customers):
         self.vehicles = vehicles
         self.capacity = capacity
         self.customers = customers
-        self.n = len(customers) - 2
         self.costs = self.compute_costs(customers)
         self.times = self.costs
         self.duals = np.zeros(len(customers))
+        self.paths = [[customer.index] for customer in self.customers[1:]]
+        self.init_model()
+
+    def init_model(self):
+        n = len(self.customers) - 1
+        path_costs = self.costs[0, 1:]
+        #path_costs[0] = self.costs[0, 1] + self.costs[1, 3]
+        A = np.eye(n)
+        #A[2, 0] = 1
+        b = np.ones(n)
+        model = gp.Model("VRPTW")
+        x = model.addMVar(n, name="v", vtype=gp.GRB.CONTINUOUS)
+        model.setObjective(path_costs @ x, gp.GRB.MINIMIZE)
+        model.addMConstrs(A, x, '=', b)
+        model.addConstr(sum(x) <= self.vehicles)
+        self.model = model
+
+    def master_problem(self):
+        self.model.optimize()
+        constrs = self.model.getConstrs()
+        self.duals[1:] = [constr.Pi for constr in constrs[:-1]]
+        self.subproblem()
+        min_label = min(self.customers[0].labels, key=lambda x: x.cost)
+        path, cost = self.path_from_label(min_label)
+        self.paths.append(path)
+        if min_label.cost - constrs[-1].Pi >= 0:
+            return False
+        p = np.array(path[1:-1]) - 1
+        print(p)
+        column = np.zeros(len(self.customers) - 1)
+        column[p] = 1
+        # costo reale, non ridotto
+        self.model.addVar(obj=cost, name=f"v{len(self.paths)-1}",
+                          column=gp.Column(column, constrs[:-1]))
+        return True
         
     def subproblem(self):
         for customer in self.customers:
             customer.labels.clear()
-        c0 = self.customers[0]
-        l0 = Label(c0, 0, 0, 0)
-        c0.labels.append(l0)
-        to_be_extended = [l0] # priority queue
+        first = self.customers[0]
+        first_label = Label(first, 0, 0, 0)
+        first_label.unreachable_cs.clear()
+        to_be_extended = [first_label] # priority queue
         while to_be_extended:
             from_label = heappop(to_be_extended)
             # if a label becomes dominated after being pushed in the priority
@@ -192,8 +244,8 @@ class VRPTW:
 
             from_label.update_unreachable_from_prev()
             for to_cus in self.customers:
-                if ((from_label.customer is c0 and to_cus.index == self.n + 1)
-                        or to_cus in from_label.unreachable_cs):
+                if (to_cus in from_label.unreachable_cs
+                        or (from_label.customer is first and to_cus is first)):
                     continue
 
                 to_label = self.extended_label(from_label, to_cus)
@@ -233,19 +285,11 @@ class VRPTW:
             return
 
         label = Label(to_cus, cost, load, time, from_label)
-        label.unreachable_cs.update(from_label.unreachable_cs)
+        if to_cus == self.customers[0]:
+            label.unreachable_cs.update(self.customers)
+        else:
+            label.unreachable_cs.update(from_label.unreachable_cs)
         return label
-        
-    def master_problem(self):
-        m1 = gb.Model("Carlo")
-        y = m1.addVars(self.n, name="y", vtype=gb.GRB.INTEGER)
-        for i in range(A.shape[0]):
-            m1.addConstr(y.prod(A[i, :].tolist()), gb.GRB.EQUAL, 1)
-        m1.setObjective(quicksum(y.prod(self.path_costs)), gb.GRB.MINIMIZE)
-            #m.write("CuttingStock.lp")
-        m1.optimize()
-        # Dual
-        self.duals = np.fromiter((w.Pi for w in m1.getConstrs()), dtype=np.float64)
 
 def print_path(label,end="\n"):
     if label.prev:
@@ -260,14 +304,13 @@ c0 = Customer(0, np.array([0, 0]), 0,  (0, 20)) # A
 c1 = Customer(1, np.array([0, 1]), 20, (5, 6))  # B
 c2 = Customer(2, np.array([2, 0]), 20, (1, 3))  # C
 c3 = Customer(3, np.array([3, 3]), 30, (6, 11)) # D
-c4 = Customer(4, np.array([0, 0]), 0,  (0, 20)) # A
 # A -> B = 1
 # A -> C = 2
 # A -> D = 4.24
 # B -> C = 2.24
 # B -> D = 3.61
 # C -> D = 3.16
-customers = [c0, c1, c2, c3, c4]
+customers = [c0, c1, c2, c3]
 vrptw = VRPTW(vehicles, capacity, customers)
 #vrptw.duals[1] = 20
 #vrptw.duals[2] = 10
