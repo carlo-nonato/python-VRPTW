@@ -1,5 +1,5 @@
-from heapq import heappush, heappop
 import numpy as np
+from collections import deque
 
 def print_path(label, end="\n"):
     if label.prev:
@@ -48,10 +48,8 @@ class Label:
         self.time = time
         self.unreachable_cs = set([customer])
         self.prev = prev
-        self._is_dominated = False
-
-    def __lt__(self, other):
-        return self.customer < other.customer
+        self.dominated = False
+        self.finished = False
 
     def __repr__(self):
         return f"{(self.customer, self.cost, self.load, self.time)}"
@@ -77,6 +75,10 @@ class Label:
            Note that having the unreachable customers set as a resource means
            that a label uses less of this resource if it possesses a subset of
            the other's unreachable customers set.
+
+           Since two perfectly equals labels describe the same path, it is
+           possible to throw away one of them by modify the above definition
+           and letting l1 dominate l2 even if they have the same resources.
            
            Arguments:
                label: the label to compare with
@@ -84,17 +86,9 @@ class Label:
                True if this label dominates 'label', False otherwise
         """
 
-        # since no label can be equal to another (it would mean the same path
-        # would be getting followed) maybe we can return the if condition 
-        # ( <= for each attribute) so L1 dominates L2 even if they are equal
-        if (self.cost <= label.cost and self.load <= label.load
-                and self.time <= label.time
-                and self.unreachable_cs.issubset(label.unreachable_cs)):
-            return (self.cost != label.cost or self.load != label.load
-                    or self.time != label.time 
-                    or (len(self.unreachable_cs) != len(label.unreachable_cs)))
-        
-        return False
+        return (self.cost <= label.cost and self.load <= label.load
+                    and self.time <= label.time
+                    and self.unreachable_cs.issubset(label.unreachable_cs))
 
     def is_dominated(self):
         """Returns True if this label is dominated by any of the labels
@@ -108,26 +102,15 @@ class Label:
     def filter_dominated(self):
         """Removes labels dominated by this label on its customer."""
 
-        # The following list comprehension can be faster but label._is_dominated
-        # can't be set (maybe it can be moved inside label.dominates()?)
-        # self.customer.labels[:] = [label for label in self.customer.labels
-        #                            if not self.dominates(label)]
         labels = []
         for label in self.customer.labels:
             if self.dominates(label):
                 # label can be already in the 'to_be_extended' queue
                 # so we need to signal that this label is no more extendable
-                label._is_dominated = True
+                label.dominated = True
             else:
                 labels.append(label)
         self.customer.labels = labels
-
-    def update_unreachable_from_prev(self):
-        """Updates unreachable customers set with customers in previous label
-           set."""
-
-        if self.prev:
-            self.unreachable_cs.update(self.prev.unreachable_cs)
 
 class ESPPRC:
     """The Elementary Shortest Path Problem with Resource Constraints
@@ -178,24 +161,24 @@ class ESPPRC:
 
         label = Label(to_cus, cost, load, time, from_label)
         if to_cus == self.customers[0]:
-            label.unreachable_cs.update(self.customers)
-        else:
-            label.unreachable_cs.update(from_label.unreachable_cs)
+            label.finished = True
+        # unreachable customers update is delayed since from_label needs to
+        # visit every customer before knowing its own set
         return label
 
     def solve(self):
         for customer in self.customers:
             customer.labels = []
         depot = self.customers[0]
-        to_be_extended = [Label.depot_label(depot)] # priority queue
+        to_be_extended = deque([Label.depot_label(depot)])
         while to_be_extended:
-            from_label = heappop(to_be_extended)
-            # if a label becomes dominated after being pushed in the priority
-            # queue, label._is_dominated becomes true and it can be skipped
-            if from_label._is_dominated:
+            from_label = to_be_extended.popleft()
+            # if a label becomes dominated after being pushed in the queue,
+            # label.dominated becomes true and it can be skipped
+            if from_label.dominated or from_label.finished:
                 continue
-
-            from_label.update_unreachable_from_prev()
+            
+            to_labels = []
             for to_cus in self.customers:
                 if (to_cus in from_label.unreachable_cs
                         or (from_label.customer is depot and to_cus is depot)):
@@ -204,14 +187,16 @@ class ESPPRC:
                 to_label = self.extended_label(from_label, to_cus)
                 if not to_label:
                     from_label.unreachable_cs.add(to_cus)
-                    continue
+                else:
+                    to_labels.append(to_label)
                 
+            for to_label in to_labels:
+                to_label.unreachable_cs.update(from_label.unreachable_cs)
                 if to_label.is_dominated():
                     continue
-
                 to_label.filter_dominated()
-                to_cus.labels.append(to_label)
-                heappush(to_be_extended, to_label)
-        
+                to_label.customer.labels.append(to_label)
+                to_be_extended.append(to_label)
+
         min_label = min(depot.labels, key=lambda x: x.cost)
         return (min_label.path, min_label.cost)

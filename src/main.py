@@ -4,6 +4,10 @@ from timeit import timeit
 from parsers import solomon_parse
 from VRPTW import Customer, VRPTW
 
+def test():
+    vrptw = solomon_parse("R101.25.txt")
+    vrptw.solve()
+
 if __name__ == "__main__":
     # Example
     vehicles = 2
@@ -23,6 +27,7 @@ if __name__ == "__main__":
     #vrptw.duals[1] = 20
     #vrptw.duals[2] = 10
 
+    #print(timeit(test, number=1))
     vrptw = solomon_parse("R101.25.txt")
     obj, paths = vrptw.solve()
     print(obj)
