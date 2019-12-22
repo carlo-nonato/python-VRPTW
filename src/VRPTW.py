@@ -20,11 +20,12 @@ class Customer:
            time_window: interval of time in which the resource must be delivered
     """
 
-    def __init__(self, index, coords, demand, time_window):
+    def __init__(self, index, coords, demand, time_window, service_time):
         self.index = index
         self.coords = coords
         self.demand = demand
         self.time_window = time_window
+        self.service_time = service_time
 
     def __lt__(self, other):
         return self.index < other.index
@@ -82,7 +83,7 @@ class VRPTW:
 
         # TODO: the first set of paths must be feasible, now it's only a guess
         self.paths = [[customer.index] for customer in self.customers[1:]]
-        path_costs = self.costs[0, 1:]
+        path_costs = self.costs[0, 1:]*2
         n = len(self.paths)
         A = np.eye(n)
         b = np.ones(n)

@@ -49,7 +49,6 @@ class Label:
         self.unreachable_cs = set([customer])
         self.prev = prev
         self.dominated = False
-        self.finished = False
 
     def __repr__(self):
         return f"{(self.customer, self.cost, self.load, self.time)}"
@@ -89,6 +88,9 @@ class Label:
         return (self.cost <= label.cost and self.load <= label.load
                     and self.time <= label.time
                     and self.unreachable_cs.issubset(label.unreachable_cs))
+        # l1 = (self.cost, self.load, self.time)
+        # l2 = (label.cost, label.load, label.time)
+        # return l1 <= l2 and self.unreachable_cs.issubset(label.unreachable_cs)
 
     def is_dominated(self):
         """Returns True if this label is dominated by any of the labels
@@ -154,14 +156,13 @@ class ESPPRC:
         if load > self.capacity:
             return
         
-        time = max(from_label.time + self.times[from_cus, to_cus],
+        time = max(from_label.time + from_label.customer.service_time
+                                   + self.times[from_cus, to_cus],
                    to_cus.time_window[0])
         if time > to_cus.time_window[1]:
             return
 
         label = Label(to_cus, cost, load, time, from_label)
-        if to_cus == self.customers[0]:
-            label.finished = True
         # unreachable customers update is delayed since from_label needs to
         # visit every customer before knowing its own set
         return label
@@ -175,28 +176,39 @@ class ESPPRC:
             from_label = to_be_extended.popleft()
             # if a label becomes dominated after being pushed in the queue,
             # label.dominated becomes true and it can be skipped
-            if from_label.dominated or from_label.finished:
+            if from_label.dominated:
                 continue
             
-            to_labels = []
-            for to_cus in self.customers:
-                if (to_cus in from_label.unreachable_cs
-                        or (from_label.customer is depot and to_cus is depot)):
-                    continue
-
-                to_label = self.extended_label(from_label, to_cus)
-                if not to_label:
-                    from_label.unreachable_cs.add(to_cus)
-                else:
-                    to_labels.append(to_label)
-                
+            to_labels = self.feasible_labels_from(from_label)
             for to_label in to_labels:
-                to_label.unreachable_cs.update(from_label.unreachable_cs)
-                if to_label.is_dominated():
-                    continue
-                to_label.filter_dominated()
+                if not to_label.customer is depot:
+                    to_label.unreachable_cs.update(from_label.unreachable_cs)
+                    if to_label.is_dominated():
+                        continue
+                    to_label.filter_dominated()
+                    to_be_extended.append(to_label)
                 to_label.customer.labels.append(to_label)
-                to_be_extended.append(to_label)
 
         min_label = min(depot.labels, key=lambda x: x.cost)
         return (min_label.path, min_label.cost)
+
+    def feasible_labels_from(self, from_label):
+        """Arguments:
+               from_label: the label that is going to be extended.
+           Returns:
+               A list of feasible labels that extends 'from_label'.
+           Note: 'from_label' unreachable set is updated in the process.
+        """
+
+        depot = self.customers[0]
+        to_labels = []
+        for to_cus in self.customers:
+            if (to_cus in from_label.unreachable_cs
+                    or (from_label.customer is depot and to_cus is depot)):
+                continue
+            to_label = self.extended_label(from_label, to_cus)
+            if not to_label:
+                from_label.unreachable_cs.add(to_cus)
+            else:
+                to_labels.append(to_label)
+        return to_labels
