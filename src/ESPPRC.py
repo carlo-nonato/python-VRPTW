@@ -15,10 +15,8 @@ class Label:
        feasible state in which that customer can be reached.
        
        A dominance relation between labels is needed (see 'dominates' method for
-       more information) so only 'best' labels can be kept on a node and the
-       resource-minimum path can be found. This is not to be confused with
-       the precedence relation between labels needed only for the priority
-       queue sorting.
+       more information) so only 'best' labels can be kept on a node resulting
+       in fewer paths to be explored.
        
        Note that the unreachable customers set is a so called 'dummy resource'.
        It contains also the already visited customers (they cannot be reached
@@ -32,21 +30,12 @@ class Label:
            prev: the previous label (used for path reconstruction)
     """
 
-    @staticmethod
-    def depot_label(depot):
-        """Creates a Label with no resources and that can be extended to the
-           same customer it is associated with."""
-
-        label = Label(depot, 0, 0, 0)
-        label.unreachable_cs.clear()
-        return label
-
     def __init__(self, customer, cost, load, time, prev=None):
         self.customer = customer
         self.cost = cost
         self.load = load
         self.time = time
-        self.unreachable_cs = set([customer])
+        self.unreachable_cs = {customer}
         self.prev = prev
         self.dominated = False
 
@@ -76,7 +65,7 @@ class Label:
            the other's unreachable customers set.
 
            Since two perfectly equals labels describe the same path, it is
-           possible to throw away one of them by modify the above definition
+           possible to throw away one of them by modifying the above definition
            and letting l1 dominate l2 even if they have the same resources.
            
            Arguments:
@@ -88,9 +77,6 @@ class Label:
         return (self.cost <= label.cost and self.load <= label.load
                     and self.time <= label.time
                     and self.unreachable_cs.issubset(label.unreachable_cs))
-        # l1 = (self.cost, self.load, self.time)
-        # l2 = (label.cost, label.load, label.time)
-        # return l1 <= l2 and self.unreachable_cs.issubset(label.unreachable_cs)
 
     def is_dominated(self):
         """Returns True if this label is dominated by any of the labels
@@ -130,12 +116,69 @@ class ESPPRC:
            times: a matrix of times needed for each arc
     """
 
+    @staticmethod
+    def make_label(to_cus, cost, load, time, from_label=None):
+        """Factory method for creating a new label."""
+
+        return Label(to_cus, cost, load, time, from_label)
+
     def __init__(self, capacity, customers, costs, times):
         self.capacity = capacity
-        self.customers = customers
+        self.customers = set(customers)
         self.costs = costs
         self.times = times
-        self.duals = np.zeros(len(self.customers))
+        self.depot = customers[0]
+        self.duals = np.zeros(len(customers))
+
+    def solve(self):
+        for customer in self.customers:
+            customer.labels = []
+        to_be_extended = deque([self.depot_label()])
+        while to_be_extended:
+            from_label = to_be_extended.popleft()
+            # if a label becomes dominated after being pushed in the queue,
+            # label.dominated becomes true and it can be skipped
+            if from_label.dominated:
+                continue
+            
+            to_labels = self.feasible_labels_from(from_label)
+            for to_label in to_labels:
+                if not to_label.customer is self.depot:
+                    to_label.unreachable_cs.update(from_label.unreachable_cs)
+                    if to_label.is_dominated():
+                        continue
+                    to_label.filter_dominated()
+                    to_be_extended.append(to_label)
+                to_label.customer.labels.append(to_label)
+
+        min_label = min(self.depot.labels, key=lambda x: x.cost)
+        return (min_label.path, min_label.cost)
+
+    def depot_label(self):
+        """Returns the algorithm starting label. It has no resources and its
+           path can return to the depot."""
+
+        label = self.make_label(self.depot, 0, 0, 0)
+        label.unreachable_cs.clear()
+        return label
+
+    def feasible_labels_from(self, from_label):
+        """Arguments:
+               from_label: the label that is going to be extended.
+           Returns:
+               A list of feasible labels that extends 'from_label'.
+           Note: 'from_label' unreachable set is updated in the process.
+        """
+
+        to_labels = []
+        for to_cus in (self.customers - from_label.unreachable_cs
+                                      - {from_label.customer}):
+            to_label = self.extended_label(from_label, to_cus)
+            if not to_label:
+                from_label.unreachable_cs.add(to_cus)
+            else:
+                to_labels.append(to_label)
+        return to_labels
 
     def extended_label(self, from_label, to_cus):
         """Returns a new label that extends 'from_label' and goes to 'to_cus'.
@@ -150,7 +193,7 @@ class ESPPRC:
 
         from_cus = from_label.customer
         cost = (from_label.cost + self.costs[from_cus, to_cus]
-                - self.duals[from_cus])
+                                - self.duals[from_cus])
         
         load = from_label.load + to_cus.demand
         if load > self.capacity:
@@ -162,53 +205,6 @@ class ESPPRC:
         if time > to_cus.time_window[1]:
             return
 
-        label = Label(to_cus, cost, load, time, from_label)
         # unreachable customers update is delayed since from_label needs to
         # visit every customer before knowing its own set
-        return label
-
-    def solve(self):
-        for customer in self.customers:
-            customer.labels = []
-        depot = self.customers[0]
-        to_be_extended = deque([Label.depot_label(depot)])
-        while to_be_extended:
-            from_label = to_be_extended.popleft()
-            # if a label becomes dominated after being pushed in the queue,
-            # label.dominated becomes true and it can be skipped
-            if from_label.dominated:
-                continue
-            
-            to_labels = self.feasible_labels_from(from_label)
-            for to_label in to_labels:
-                if not to_label.customer is depot:
-                    to_label.unreachable_cs.update(from_label.unreachable_cs)
-                    if to_label.is_dominated():
-                        continue
-                    to_label.filter_dominated()
-                    to_be_extended.append(to_label)
-                to_label.customer.labels.append(to_label)
-
-        min_label = min(depot.labels, key=lambda x: x.cost)
-        return (min_label.path, min_label.cost)
-
-    def feasible_labels_from(self, from_label):
-        """Arguments:
-               from_label: the label that is going to be extended.
-           Returns:
-               A list of feasible labels that extends 'from_label'.
-           Note: 'from_label' unreachable set is updated in the process.
-        """
-
-        depot = self.customers[0]
-        to_labels = []
-        for to_cus in self.customers:
-            if (to_cus in from_label.unreachable_cs
-                    or (from_label.customer is depot and to_cus is depot)):
-                continue
-            to_label = self.extended_label(from_label, to_cus)
-            if not to_label:
-                from_label.unreachable_cs.add(to_cus)
-            else:
-                to_labels.append(to_label)
-        return to_labels
+        return self.make_label(to_cus, cost, load, time, from_label)
