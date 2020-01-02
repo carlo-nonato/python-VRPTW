@@ -3,6 +3,7 @@ import scipy.spatial.distance as sp
 import gurobipy as gp
 
 from ESPPRC import ESPPRC
+from DSSR_ESPPRC import DSSR_ESPPRC
 
 class Customer:
     """A customer is a node of the graph. It has an index, a location and
@@ -76,14 +77,16 @@ class VRPTW:
         self.costs = self.compute_costs(customers)
         self.times = self.costs
         self.init_model()
-        self.espprc = ESPPRC(capacity, customers, self.costs, self.times)
+        #self.espprc = ESPPRC(capacity, customers, self.costs, self.times)
+        self.espprc = DSSR_ESPPRC(capacity, customers, self.costs, self.times)
 
     def init_model(self):
         """Inits the master problem model."""
 
         # TODO: the first set of paths must be feasible, now it's only a guess
-        self.paths = [[customer.index] for customer in self.customers[1:]]
         path_costs = self.costs[0, 1:]*2
+        self.paths = [([0, customer.index, 0], cost)
+                      for customer, cost in zip(self.customers[1:], path_costs)]
         n = len(self.paths)
         A = np.eye(n)
         b = np.ones(n)
@@ -101,6 +104,7 @@ class VRPTW:
             duals = [constr.Pi for constr in self.model.getConstrs()]
             self.espprc.duals[1:] = duals[:-1]
             path, reduced_cost = self.espprc.solve()
+            path = [customer.index for customer in path]
             if reduced_cost - duals[-1] >= -1e-9:
                 return (self.model.getObjective().getValue(), self.used_paths())
             cost = reduced_cost + sum(self.espprc.duals[path])

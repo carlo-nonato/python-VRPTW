@@ -1,12 +1,6 @@
 import numpy as np
 from collections import deque
 
-def print_path(label, end="\n"):
-    if label.prev:
-        print_path(label.prev,"")
-        print(" -> ", end="")
-    print(label.customer.index, end=end)
-
 class Label:
     """A label describes a path from the depot to a customer and the resources
        used in this path.
@@ -17,10 +11,6 @@ class Label:
        A dominance relation between labels is needed (see 'dominates' method for
        more information) so only 'best' labels can be kept on a node resulting
        in fewer paths to be explored.
-       
-       Note that the unreachable customers set is a so called 'dummy resource'.
-       It contains also the already visited customers (they cannot be reached
-       again because we are looking for an elementary path).
        
        Attributes:
            customer: the customer whom this label is associated with
@@ -35,7 +25,7 @@ class Label:
         self.cost = cost
         self.load = load
         self.time = time
-        self.unreachable_cs = {customer}
+        self.unreachable_cs = set()
         self.prev = prev
         self.dominated = False
 
@@ -49,9 +39,9 @@ class Label:
         label = self
         path = []
         while label.prev:
-            path.append(label.customer.index)
+            path.append(label.customer)
             label = label.prev
-        path.append(label.customer.index)
+        path.append(label.customer)
         return list(reversed(path))
 	
     def dominates(self, label):
@@ -59,10 +49,6 @@ class Label:
            it uses less resources than the other label, meaning that all of
            its resources must be less than or equal to the other's, but there
            must be at least one resource that is different.
-           
-           Note that having the unreachable customers set as a resource means
-           that a label uses less of this resource if it possesses a subset of
-           the other's unreachable customers set.
 
            Since two perfectly equals labels describe the same path, it is
            possible to throw away one of them by modifying the above definition
@@ -75,8 +61,7 @@ class Label:
         """
 
         return (self.cost <= label.cost and self.load <= label.load
-                    and self.time <= label.time
-                    and self.unreachable_cs.issubset(label.unreachable_cs))
+                and self.time <= label.time)
 
     def is_dominated(self):
         """Returns True if this label is dominated by any of the labels
@@ -100,6 +85,24 @@ class Label:
                 labels.append(label)
         self.customer.labels = labels
 
+class ESP_Label(Label):
+    """Extension of base Label used to describe elementary paths only.
+       To do that the unreachable customers set contains also the visited
+       customers and it is used as a resource, meaning that the dominance
+       relation is also extended."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.unreachable_cs.add(self.customer)
+    
+    def dominates(self, label):
+        """Note that having the unreachable customers set as a resource means
+           that a label uses less of this resource if it possesses a subset of
+           the other's unreachable customers set."""
+
+        return (super().dominates(label)
+                and self.unreachable_cs.issubset(label.unreachable_cs))
+
 class ESPPRC:
     """The Elementary Shortest Path Problem with Resource Constraints
        instance class.
@@ -116,12 +119,6 @@ class ESPPRC:
            times: a matrix of times needed for each arc
     """
 
-    @staticmethod
-    def make_label(to_cus, cost, load, time, from_label=None):
-        """Factory method for creating a new label."""
-
-        return Label(to_cus, cost, load, time, from_label)
-
     def __init__(self, capacity, customers, costs, times):
         self.capacity = capacity
         self.customers = set(customers)
@@ -129,6 +126,7 @@ class ESPPRC:
         self.times = times
         self.depot = customers[0]
         self.duals = np.zeros(len(customers))
+        self.label_cls = ESP_Label
 
     def solve(self):
         for customer in self.customers:
@@ -158,7 +156,7 @@ class ESPPRC:
         """Returns the algorithm starting label. It has no resources and its
            path can return to the depot."""
 
-        label = self.make_label(self.depot, 0, 0, 0)
+        label = self.label_cls(self.depot, 0, 0, 0)
         label.unreachable_cs.clear()
         return label
 
@@ -207,4 +205,4 @@ class ESPPRC:
 
         # unreachable customers update is delayed since from_label needs to
         # visit every customer before knowing its own set
-        return self.make_label(to_cus, cost, load, time, from_label)
+        return self.label_cls(to_cus, cost, load, time, from_label)
