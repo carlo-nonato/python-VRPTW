@@ -96,10 +96,9 @@ class ESP_Label(Label):
         self.unreachable_cs.add(self.customer)
     
     def dominates(self, label):
-        """Note that having the unreachable customers set as a resource means
-           that a label uses less of this resource if it possesses a subset of
-           the other's unreachable customers set."""
-
+        # Note that having the unreachable customers set as a resource means
+        # that a label uses less of this resource if it possesses a subset of
+        # the other's unreachable customers set.
         return (super().dominates(label)
                 and self.unreachable_cs.issubset(label.unreachable_cs))
 
@@ -126,6 +125,7 @@ class ESPPRC:
         self.times = times
         self.depot = customers[0]
         self.duals = np.zeros(len(customers))
+        self.n_customers = len(customers)
         self.label_cls = ESP_Label
 
     def solve(self):
@@ -189,20 +189,19 @@ class ESPPRC:
                exceeds its limits.
         """
 
-        from_cus = from_label.customer
-        cost = (from_label.cost + self.costs[from_cus, to_cus]
-                                - self.duals[from_cus])
-        
         load = from_label.load + to_cus.demand
         if load > self.capacity:
             return
         
-        time = max(from_label.time + from_label.customer.service_time
+        from_cus = from_label.customer
+        time = max(from_label.time + from_cus.service_time
                                    + self.times[from_cus, to_cus],
                    to_cus.time_window[0])
         if time > to_cus.time_window[1]:
             return
 
+        cost = (from_label.cost + self.costs[from_cus, to_cus]
+                                - self.duals[from_cus])
         # unreachable customers update is delayed since from_label needs to
         # visit every customer before knowing its own set
         return self.label_cls(to_cus, cost, load, time, from_label)

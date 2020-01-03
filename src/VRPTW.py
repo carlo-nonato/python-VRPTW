@@ -111,6 +111,13 @@ class VRPTW:
             self.add_path(path, cost)
     
     def add_path(self, path, cost):
+        """Add path to the master problem.
+           
+           Arguments:
+               path: the path to be added
+               cost: the path cost
+        """
+
         self.paths.append((path, cost))
         path_indices = np.array(path[1:-1]) - 1
         coeffs = np.zeros(len(self.customers) - 1)
@@ -119,6 +126,7 @@ class VRPTW:
                           column=gp.Column(coeffs,self.model.getConstrs()[:-1]))
 
     def used_paths(self):
-        return [self.paths[i] for i, var in enumerate(self.model.getVars())
-                if var.x != 0]
+        """Returns the path used in the optimal solution."""
         
+        return [path for path, var in zip(self.paths, self.model.getVars())
+                if var.x != 0]

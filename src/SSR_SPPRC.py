@@ -1,6 +1,12 @@
 from ESPPRC import Label, ESPPRC
 
 class SSR_Label(Label):
+    """State space relaxed version of ESP Label. The relaxation is accomplished
+       by not using the unreachable customer set as a resource, replacing it
+       with the number of visited customers. By doing so the dominated labels
+       grow in number and less paths are explored reducing the execution time,
+       but it is possible to have cycles in the path found."""
+
     def __init__(self, *args):
         super().__init__(*args)
         self.n_visited = 0
@@ -9,6 +15,8 @@ class SSR_Label(Label):
         return (super().dominates(label) and self.n_visited <= label.n_visited)
 
 class SSR_SPPRC(ESPPRC):
+    """State space relaxation SPPRC algorithm. See SSR label for details."""
+
     def __init__(self, *args):
         super().__init__(*args)
         self.label_cls = SSR_Label
@@ -18,6 +26,6 @@ class SSR_SPPRC(ESPPRC):
         if not label:
             return
 
-        label.n_visited += 1*(to_cus is not self.depot)
-        if label.n_visited <= len(self.customers):
+        label.n_visited += 1*(to_cus is not self.depot) # don't count last arc
+        if label.n_visited <= self.n_customers:
             return label
