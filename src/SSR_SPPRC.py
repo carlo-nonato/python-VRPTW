@@ -25,7 +25,11 @@ class SSR_SPPRC(ESPPRC):
         label = super().extended_label(from_label, to_cus)
         if not label:
             return
-
-        label.n_visited += 1*(to_cus is not self.depot) # don't count last arc
-        if label.n_visited <= self.n_customers:
-            return label
+            
+        # don't count last arc
+        n_visited = from_label.n_visited + 1*(to_cus is not self.depot)
+        if n_visited > self.n_customers:
+            return
+        
+        label.n_visited = n_visited
+        return label

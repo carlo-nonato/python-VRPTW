@@ -55,11 +55,9 @@ class DSSR_ESPPRC(SSR_SPPRC):
     
     def extended_label(self, from_label, to_cus):
         label = super().extended_label(from_label, to_cus)
-        if not label:
-            return
+        if not label or to_cus in from_label.critical_visited:
+           return
 
         if to_cus in self.critical_cs:
-            if to_cus in label.critical_visited:
-                return
-            label.critical_visited.add(to_cus)
+            label.critical_visited = from_label.critical_visited | {to_cus}
         return label
