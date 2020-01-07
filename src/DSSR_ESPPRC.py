@@ -58,6 +58,7 @@ class DSSR_ESPPRC(SSR_SPPRC):
         if not label or to_cus in from_label.critical_visited:
            return
 
+        label.critical_visited.update(from_label.critical_visited)
         if to_cus in self.critical_cs:
-            label.critical_visited = from_label.critical_visited | {to_cus}
+            label.critical_visited.add(to_cus)
         return label
