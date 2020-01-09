@@ -1,5 +1,6 @@
 import numpy as np
 from collections import deque
+from functools import lru_cache
 
 class Label:
     """A label describes a path from the depot to a customer and the resources
@@ -33,6 +34,7 @@ class Label:
         return f"{(self.customer, self.cost, self.load, self.time)}"
 
     @property
+    @lru_cache(maxsize=1)
     def path(self):
         """Returns the path described by this label."""
 
@@ -141,16 +143,14 @@ class ESPPRC:
             
             to_labels = self.feasible_labels_from(from_label)
             for to_label in to_labels:
-                if not to_label.customer is self.depot:
-                    to_label.unreachable_cs.update(from_label.unreachable_cs)
-                    if to_label.is_dominated():
-                        continue
-                    to_label.filter_dominated()
-                    to_be_extended.append(to_label)
+                to_label.unreachable_cs.update(from_label.unreachable_cs)
+                if to_label.is_dominated():
+                    continue
+                to_label.filter_dominated()
+                to_be_extended.append(to_label)
                 to_label.customer.labels.append(to_label)
 
-        min_label = min(self.depot.labels, key=lambda x: x.cost)
-        return (min_label.path, min_label.cost)
+        return sorted(self.depot.labels, key=lambda x: x.cost)
 
     def depot_label(self):
         """Returns the algorithm starting label. It has no resources and its

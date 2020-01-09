@@ -7,11 +7,13 @@ def find_repeated(items):
            A set of elements that are repeated in 'items'."""
 
     seen, seen_twice = set(), set()
+    seen_twice_add = seen_twice.add
+    seen_add = seen.add
     for item in items:
         if item in seen:
-            seen_twice.add(item)
+            seen_twice_add(item)
         else:
-            seen.add(item)
+            seen_add(item)
     return seen_twice
 
 class DSSR_Label(SSR_Label):
@@ -46,12 +48,15 @@ class DSSR_ESPPRC(SSR_SPPRC):
     
     def solve(self):
         while True:
-            path, cost = super().solve()
-            repeated = find_repeated(path[:-1])
-            if repeated:
-                self.critical_cs.update(repeated)
-            else:
-                return path, cost
+            labels = super().solve()
+            repeat = False
+            for label in labels:
+                repeated = find_repeated(label.path[:-1])
+                if repeated:
+                    self.critical_cs.update(repeated)
+                    repeat = True
+            if not repeat:
+                return labels
     
     def extended_label(self, from_label, to_cus):
         label = super().extended_label(from_label, to_cus)

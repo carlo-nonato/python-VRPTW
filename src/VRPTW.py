@@ -3,7 +3,6 @@ import scipy.spatial.distance as sp
 import gurobipy as gp
 
 from ESPPRC import ESPPRC
-from DSSR_ESPPRC import DSSR_ESPPRC
 
 class Customer:
     """A customer is a node of the graph. It has an index, a location and
@@ -64,6 +63,21 @@ class VRPTW:
     """
 
     @staticmethod
+    def from_file(filename):
+        """Create a VRPTW instance from a text file."""
+
+        with open(filename) as input_file:
+            lines = input_file.readlines()
+            vehicles, capacity = [int(i) for i in lines[4].split()]
+            data = [[int(i) for i in line.split()] for line in lines[9:]]
+
+        customers = [Customer(line[0], np.array(line[1:3]), line[3], line[4:6],
+                              line[6])
+                     for line in data if line]
+        vrptw = VRPTW(vehicles, capacity, customers)
+        return vrptw
+
+    @staticmethod
     def compute_costs(customers):
         """Returns a square symmetric matrix of distances between customers."""
 
@@ -76,17 +90,14 @@ class VRPTW:
         self.customers = customers
         self.costs = self.compute_costs(customers)
         self.times = self.costs
-        self.init_model()
-        #self.espprc = ESPPRC(capacity, customers, self.costs, self.times)
-        self.espprc = DSSR_ESPPRC(capacity, customers, self.costs, self.times)
 
     def init_model(self):
         """Inits the master problem model."""
 
         # TODO: the first set of paths must be feasible, now it's only a guess
         path_costs = self.costs[0, 1:]*2
-        self.paths = [([0, customer.index, 0], cost)
-                      for customer, cost in zip(self.customers[1:], path_costs)]
+        self.paths = [(0, customer.index, 0) for customer in self.customers[1:]]
+        self.paths_set = set(self.paths)
         n = len(self.paths)
         A = np.eye(n)
         b = np.ones(n)
@@ -98,17 +109,26 @@ class VRPTW:
         model.addConstr(sum(x) <= self.vehicles)
         self.model = model
 
+    def set_espprc_solver(self, espprc_cls):
+        self.espprc = espprc_cls(self.capacity, self.customers, self.costs,
+                                 self.times)
+
     def solve(self):
         while True:
             self.model.optimize()
             duals = [constr.Pi for constr in self.model.getConstrs()]
             self.espprc.duals[1:] = duals[:-1]
-            path, reduced_cost = self.espprc.solve()
-            path = [customer.index for customer in path]
-            if reduced_cost - duals[-1] >= -1e-9:
+            labels = self.espprc.solve()
+            if labels[0].cost - duals[-1] >= -1e-9:
                 return (self.model.getObjective().getValue(), self.used_paths())
-            cost = reduced_cost + sum(self.espprc.duals[path])
-            self.add_path(path, cost)
+            for label in labels:
+                if label.cost - duals[-1] >= 0:
+                    break
+                path = tuple(customer.index for customer in label.path)
+                if path in self.paths_set:
+                    continue
+                cost = label.cost + sum(self.espprc.duals[list(path)])
+                self.add_path(path, cost)
     
     def add_path(self, path, cost):
         """Add path to the master problem.
@@ -118,8 +138,9 @@ class VRPTW:
                cost: the path cost
         """
 
-        self.paths.append((path, cost))
-        path_indices = np.array(path[1:-1]) - 1
+        self.paths.append(path)
+        self.paths_set.add(path)
+        path_indices = [index - 1 for index in path[1:-1]]
         coeffs = np.zeros(len(self.customers) - 1)
         coeffs[path_indices] = 1
         self.model.addVar(obj=cost, name=f"v{len(self.paths)-1}",
@@ -128,5 +149,6 @@ class VRPTW:
     def used_paths(self):
         """Returns the path used in the optimal solution."""
         
-        return [path for path, var in zip(self.paths, self.model.getVars())
+        return [(path, var.Obj, var.x)
+                for path, var in zip(self.paths, self.model.getVars())
                 if var.x != 0]
