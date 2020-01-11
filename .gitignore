@@ -5,3 +5,5 @@ __pycache__/
 *.log
 *.lp
 *.txt
+
+test*/
