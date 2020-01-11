@@ -143,12 +143,14 @@ class ESPPRC:
             
             to_labels = self.feasible_labels_from(from_label)
             for to_label in to_labels:
-                to_label.unreachable_cs.update(from_label.unreachable_cs)
-                if to_label.is_dominated():
-                    continue
-                to_label.filter_dominated()
-                to_be_extended.append(to_label)
-                to_label.customer.labels.append(to_label)
+                to_cus = to_label.customer
+                if to_cus is not self.depot:
+                    to_label.unreachable_cs.update(from_label.unreachable_cs)
+                    if to_label.is_dominated():
+                        continue
+                    to_label.filter_dominated()
+                    to_be_extended.append(to_label)
+                to_cus.labels.append(to_label)
 
         return sorted(self.depot.labels, key=lambda x: x.cost)
 

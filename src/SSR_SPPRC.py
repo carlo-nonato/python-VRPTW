@@ -26,8 +26,7 @@ class SSR_SPPRC(ESPPRC):
         if not label:
             return
             
-        # don't count last arc
-        n_visited = from_label.n_visited + 1*(to_cus is not self.depot)
+        n_visited = from_label.n_visited + 1
         if n_visited > self.n_customers:
             return
         

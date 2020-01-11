@@ -119,7 +119,7 @@ class VRPTW:
             duals = [constr.Pi for constr in self.model.getConstrs()]
             self.espprc.duals[1:] = duals[:-1]
             labels = self.espprc.solve()
-            if labels[0].cost - duals[-1] >= -1e-9:
+            if labels and labels[0].cost - duals[-1] >= -1e-9:
                 return (self.model.getObjective().getValue(), self.used_paths())
             for label in labels:
                 if label.cost - duals[-1] >= 0:

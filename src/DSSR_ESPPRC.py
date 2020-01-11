@@ -45,18 +45,19 @@ class DSSR_ESPPRC(SSR_SPPRC):
         super().__init__(*args)
         self.label_cls = DSSR_Label
         self.critical_cs = set()
-    
+
     def solve(self):
-        while True:
-            labels = super().solve()
-            repeat = False
+        labels = super().solve()
+        
+        def acyclic_labels():
             for label in labels:
                 repeated = find_repeated(label.path[:-1])
                 if repeated:
                     self.critical_cs.update(repeated)
-                    repeat = True
-            if not repeat:
-                return labels
+                else:
+                    yield label
+        
+        return list(acyclic_labels())
     
     def extended_label(self, from_label, to_cus):
         label = super().extended_label(from_label, to_cus)
