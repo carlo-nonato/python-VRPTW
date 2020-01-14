@@ -1,7 +1,9 @@
 import numpy as np
 import scipy.spatial.distance as sp
 import gurobipy as gp
+from functools import lru_cache
 
+from BB import BBNode, BB
 from ESPPRC import ESPPRC
 
 class Customer:
@@ -85,7 +87,7 @@ class VRPTW:
         return sp.squareform(sp.pdist(coords))
 
     def __init__(self, vehicles, capacity, customers):
-        self.vehicles = vehicles
+        self.vehicles = len(customers) - 1
         self.capacity = capacity
         self.customers = customers
         self.costs = self.compute_costs(customers)
@@ -105,8 +107,9 @@ class VRPTW:
         model.Params.OutputFlag = 0
         x = model.addMVar(n, name="v", vtype=gp.GRB.CONTINUOUS)
         model.setObjective(path_costs @ x, gp.GRB.MINIMIZE)
+        self.min_vehicles_constr = model.addConstr(sum(x) >= 0)[0]
         model.addMConstrs(A, x, '=', b)
-        model.addConstr(sum(x) <= self.vehicles)
+        self.max_vehicles_constr = model.addConstr(sum(x) <= self.vehicles)[0]
         self.model = model
 
     def set_espprc_solver(self, espprc_cls):
@@ -114,37 +117,45 @@ class VRPTW:
                                  self.times)
 
     def solve(self):
+        self.model.optimize()
+        if self.model.status == gp.GRB.INFEASIBLE:
+            return
+
         while True:
-            self.model.optimize()
             duals = [constr.Pi for constr in self.model.getConstrs()]
-            self.espprc.duals[1:] = duals[:-1]
+            self.espprc.duals[:] = duals[:-1]
+            self.espprc.duals[0] += duals[-1]
             labels = self.espprc.solve()
-            if labels and labels[0].cost - duals[-1] >= -1e-9:
+            if labels and labels[0].cost >= -1e-9:
                 return (self.model.getObjective().getValue(), self.used_paths())
             for label in labels:
-                if label.cost - duals[-1] >= 0:
+                if label.cost >= 0:
                     break
-                path = tuple(customer.index for customer in label.path)
-                if path in self.paths_set:
-                    continue
-                cost = label.cost + sum(self.espprc.duals[list(path)])
-                self.add_path(path, cost)
+                path = [customer.index for customer in label.path]
+                self.add_path(path, label.cost)
+            self.model.optimize()
     
-    def add_path(self, path, cost):
+    def add_path(self, path, reduced_cost):
         """Add path to the master problem.
            
            Arguments:
                path: the path to be added
-               cost: the path cost
+               reduced_cost: the path reduced cost
         """
 
-        self.paths.append(path)
-        self.paths_set.add(path)
-        path_indices = [index - 1 for index in path[1:-1]]
-        coeffs = np.zeros(len(self.customers) - 1)
-        coeffs[path_indices] = 1
+        path_t = tuple(path)
+        if path_t in self.paths_set:
+            return
+            
+        self.paths.append(path_t)
+        self.paths_set.add(path_t)
+        n_customers = len(self.customers)
+        path[-1] = n_customers
+        coeffs = np.zeros(n_customers + 1)
+        coeffs[path] = 1
+        cost = reduced_cost + sum(self.espprc.duals[path[:-1]])
         self.model.addVar(obj=cost, name=f"v{len(self.paths)-1}",
-                          column=gp.Column(coeffs,self.model.getConstrs()[:-1]))
+                          column=gp.Column(coeffs, self.model.getConstrs()))
 
     def used_paths(self):
         """Returns the path used in the optimal solution."""
@@ -152,3 +163,41 @@ class VRPTW:
         return [(path, var.Obj, var.x)
                 for path, var in zip(self.paths, self.model.getVars())
                 if var.x != 0]
+
+    def bb_solve(self):
+        root = VRPTW_BBNode(self, 0, self.vehicles)
+        return BB(root)
+
+def is_integer(value):
+    return np.isclose(value, int(value)) 
+
+class VRPTW_BBNode(BBNode):
+    def __init__(self, vrptw, min_vehicles, max_vehicles):
+        self.vrptw = vrptw
+        self.min_vehicles = min_vehicles
+        self.max_vehicles = max_vehicles
+        self.infeasible = False
+    
+    def is_infeasible(self):
+        return self.infeasible
+    
+    @lru_cache(maxsize=1)
+    def is_integer(self):
+        return is_integer(self.current_vehicles())
+
+    def current_vehicles(self):
+        return sum(var.x for var in self.vrptw.model.getVars())
+    
+    def split(self):
+        vehicles = self.current_vehicles()
+        return (VRPTW_BBNode(self.vrptw, self.min_vehicles, np.floor(vehicles)),
+                VRPTW_BBNode(self.vrptw, np.ceil(vehicles), self.max_vehicles))
+    
+    def solve(self):
+        self.vrptw.min_vehicles_constr.RHS = self.min_vehicles
+        self.vrptw.max_vehicles_constr.RHS = self.max_vehicles
+        results = self.vrptw.solve()
+        if results:
+            self.obj, self.solution = results
+        else:
+            self.infeasible = True
