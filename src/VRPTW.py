@@ -169,7 +169,7 @@ class VRPTW:
         return BB(root)
 
 def is_integer(value):
-    return np.isclose(value, int(value)) 
+    return np.isclose(value, np.round(value), atol=1e-6) 
 
 class VRPTW_BBNode(BBNode):
     def __init__(self, vrptw, min_vehicles, max_vehicles):

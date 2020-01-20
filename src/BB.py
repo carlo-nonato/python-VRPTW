@@ -20,6 +20,7 @@ def BB(root_bbnode):
         if bbnode.is_integer():
             if bbnode.obj < min_obj:
                 min_bbnode = bbnode
+                min_obj = bbnode.obj
             continue
         if bbnode.obj > min_obj:
             continue
